@@ -1,6 +1,9 @@
 Day 1
 Day 5
+Day 7CNO
 data
+logs
 
+*.log
 *.tif
 *.traces

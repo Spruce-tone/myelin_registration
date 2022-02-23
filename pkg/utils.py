@@ -4,6 +4,9 @@ import logging.config
 import json
 import os
 
+if not os.path.isdir('./logs'):
+    os.makedirs('./logs', exist_ok=True)
+        
 LOGGING_CONFIG = {
     'version': 1,
     'loggers': {
