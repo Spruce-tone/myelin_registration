@@ -1,8 +1,11 @@
 import gzip, os, re
 import xml.etree.ElementTree as ET
 from collections import Counter
-from pkg.utils import CustomLogger
 from typing import List, Set, Dict, Tuple
+from skimage import io
+import numpy as np
+
+from pkg.utils import CustomLogger
 
 logger = CustomLogger().info_logger
 
@@ -23,20 +26,18 @@ def extractTrace(tracedir: str, tracefile: str):
         tree = ET.parse(fileopen)
         root = tree.getroot()
     
-    paths = {'trace' : []}
-    path = {'x' : [], 'y' : [], 'z' : []}
-
+    paths = {}
+    
     for child in root:
         if child.tag == 'path':
+            path = {'x' : [], 'y' : [], 'z' : []}
             for point in child:
-                path['x'].append(point.attrib['xd'])
-                path['y'].append(point.attrib['yd'])
-                path['z'].append(point.attrib['zd'])
-            path['trace_name'] = child.attrib['name']
+                path['x'].append(int(point.attrib['x'])) # pixel index
+                path['y'].append(int(point.attrib['y']))
+                path['z'].append(int(point.attrib['z']))
+            paths[child.attrib['name']] = path 
 
-        paths['trace'].append(path)
     paths['fname'] = tracefile
-
     return paths
 
 def dir_exist_check(path: str):
@@ -116,8 +117,17 @@ def unique_counter(fnames: list, save_name: bool=True) -> Dict:
                 raise Exception(f'Duplicate day {duplicate_id}')
     return unique_names
 
+def day_sorting(fname: str):
+    '''
+    Input Args:
+        fname: str 
+            filne for sorting
+    '''
+    parser = define_name_parser()
+    parsed_name = int(parser.search(fname).group('day')) # sorting list in ascending order based on the day
+    return parsed_name
 
-def search_regi_files(raw_path: str='./data', regi_path: str='./registration') -> List[Tuple]:
+def search_regi_files(raw_path: str='./data', regi_path: str='./registration') -> Dict:
     '''
     Input Args:
         raw_path: str (default = './data')
@@ -126,9 +136,10 @@ def search_regi_files(raw_path: str='./data', regi_path: str='./registration') -
             directory path containing registrated .traces and image files
 
     Return:
-        file_path_regi: List[Tuple]
+        file_path_regi: Dict
             path for files to be preformed registration.
-            example) [(raw_file_1.tif, raw_file_1.traces), (raw_file_2.tif, raw_file_2.traces), (raw_file_3.tif, raw_file_3.traces)...]
+            The first image is the reference
+            example) {'#raw_file_id' :[(raw_file_1.tif, raw_file_1.traces), (raw_file_2.tif, raw_file_2.traces), ...]}
     '''
     dir_exist_check(raw_path) # check raw data directory existence
     dir_exist_check(regi_path) # check registration directory existence
@@ -153,37 +164,63 @@ def search_regi_files(raw_path: str='./data', regi_path: str='./registration') -
                 logger.debug(f'Already registration is preformed. {raw_id} is excluded')
                 continue
             
-        file_path_regi[raw_id] = {}
+        # file_path_regi[raw_id] = {}
+        # sorted_fnames = [fname.strip('.traces') for fname in sorted(raw_list[raw_id]['fname'], key=day_sorting)]
+        # file_path_regi[raw_id]['ref'] = [(os.path.join(raw_path, fname+'.tif'), os.path.join(raw_path, fname+'.traces')) for fname in [sorted_fnames[0]]]
+        # file_path_regi[raw_id]['registration'] = [(os.path.join(raw_path, fname+'.tif'), os.path.join(raw_path, fname+'.traces')) for fname in sorted_fnames[1:]]
+        
+        file_path_regi[raw_id] = []
         sorted_fnames = [fname.strip('.traces') for fname in sorted(raw_list[raw_id]['fname'], key=day_sorting)]
-        file_path_regi[raw_id]['ref'] = [(os.path.join(raw_path, fname+'.tif'), os.path.join(raw_path, fname+'.traces')) for fname in [sorted_fnames[0]]]
-        file_path_regi[raw_id]['registration'] = [(os.path.join(raw_path, fname+'.tif'), os.path.join(raw_path, fname+'.traces')) for fname in sorted_fnames[1:]]
+        file_path_regi[raw_id] = [(fname+'.tif', fname+'.traces') for fname in sorted_fnames]
 
         logger.debug(f'{raw_list[raw_id]["fname"]} is added to the registration list')
 
     return file_path_regi
 
-def day_sorting(fname: str):
+def path_to_array(path: Dict) -> np.ndarray:
     '''
     Input Args:
-        fname: str 
-            filne for sorting
+        path: Dict
+            x, y, z 3D coordinates of single segment
+            example) {'x' : [1, 2, 3], 'y' : [3, 2, 1], 'z' : [4, 5, 6]}
+
+    Return:
+        path_array: np.ndarray [shape : (3, length of x (or y, z))]
+            numpy array of x, y, z 3D coordinates
     '''
-    parser = define_name_parser()
-    parsed_name = int(parser.search(fname).group('day')) # sorting list in ascending order based on the day
-    return parsed_name
+    path_array = np.array([path['x'], path['y'], path['z']])
+    return path_array
 
+def crop_img(img: np.ndarray, coords_idx: Tuple) -> np.ndarray:
+    
+    return
 
-def start_registration(file_path_regi: List[Tuple], regi_path: str='./registration'):
+def segment_registration(file_path_regi: List[Tuple], raw_path: str='./data', regi_path: str='./registration'):
     '''
     Input Args:
         file_path_regi: List[Tuple]
             path for files to be preformed registration.
             example) [(raw_file_1.tif, raw_file_1.traces), (raw_file_2.tif, raw_file_2.traces), (raw_file_3.tif, raw_file_3.traces)...]
+        raw_path: str (default = './data')
+            directory path containing raw .traces and image files
         regi_path: str (default = './registration')
             directory path containing registrated .traces and image files
     '''
+    logger.debug('start segment_registration')
 
-    pass
+    for img_id in file_path_regi.keys():
+        for img_name, tracefile in file_path_regi[img_id]:
+            img = io.imread(os.path.join(raw_path, img_name))
+            paths = extractTrace(raw_path, tracefile)
+
+            for path_name in paths.keys():
+                seg = path_to_array(paths[path_name])
+                rect_idx = (seg[0, :].min(), seg[0, :].max(),
+                            seg[1, :].min(), seg[1, :].max(),
+                            seg[2, :].min(), seg[2, :].max()) # segment frame index
+    return paths
+            
+    
 
 if __name__=='__main__':
     file_path_regi = search_regi_files(raw_path='./data', regi_path='./registration')
