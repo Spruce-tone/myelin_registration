@@ -163,12 +163,7 @@ def search_regi_files(raw_path: str='./data', regi_path: str='./registration') -
             if set(raw_list[raw_id]['day']) == set(regi_list[raw_id]['day']):
                 logger.debug(f'Already registration is preformed. {raw_id} is excluded')
                 continue
-            
-        # file_path_regi[raw_id] = {}
-        # sorted_fnames = [fname.strip('.traces') for fname in sorted(raw_list[raw_id]['fname'], key=day_sorting)]
-        # file_path_regi[raw_id]['ref'] = [(os.path.join(raw_path, fname+'.tif'), os.path.join(raw_path, fname+'.traces')) for fname in [sorted_fnames[0]]]
-        # file_path_regi[raw_id]['registration'] = [(os.path.join(raw_path, fname+'.tif'), os.path.join(raw_path, fname+'.traces')) for fname in sorted_fnames[1:]]
-        
+
         file_path_regi[raw_id] = []
         sorted_fnames = [fname.strip('.traces') for fname in sorted(raw_list[raw_id]['fname'], key=day_sorting)]
         file_path_regi[raw_id] = [(fname+'.tif', fname+'.traces') for fname in sorted_fnames]
@@ -191,33 +186,93 @@ def path_to_array(path: Dict) -> np.ndarray:
     path_array = np.array([path['x'], path['y'], path['z']])
     return path_array
 
-def crop_img(img: np.ndarray, coords_idx: Tuple) -> np.ndarray:
-    
-    return
-
-def segment_registration(file_path_regi: List[Tuple], raw_path: str='./data', regi_path: str='./registration'):
+def edge_indexing(size_single_axis: int, boundary_pixel_idx: Tuple[int], margin_pixel: int=10) -> Tuple[int]:
     '''
     Input Args:
-        file_path_regi: List[Tuple]
+        size_single_axis: int
+            size of specified axis
+        boundary_pixel_idx: Tuple[int]
+            boundary pixel index of specified axis
+            (lower bound idx, upper bound idx)
+        margin_pixel: int (default=10)
+            the No. of pixel for margin
+    Return:
+        (lowerbnd_idx, uppperbnd_idx): Tuple[int]
+            lower and upper bound index of image for cropping
+    '''   
+    lowerbnd_idx, uppperbnd_idx = boundary_pixel_idx
+    # lower bound
+    # negative index
+    if lowerbnd_idx - margin_pixel < 0: 
+        lowerbnd_idx = 0 # lower bound is zero
+    # positive index including zero
+    else: 
+        lowerbnd_idx = lowerbnd_idx - margin_pixel # make margin at lower bound
+
+    # upper bound
+    # (marging + upper bound idx) is larger than img edge index
+    if uppperbnd_idx + margin_pixel > size_single_axis - 1: # size_single_axis - 1 is edge index of image 
+        uppperbnd_idx = size_single_axis - 1 # upper bound idx is edge index of image
+    else:
+        uppperbnd_idx = uppperbnd_idx + margin_pixel
+    return (lowerbnd_idx, uppperbnd_idx)
+
+
+def crop_img(img: np.ndarray, coords_idx: Tuple[int], margin_pixel: int=10) -> np.ndarray:
+    '''
+    Input Args:
+        img: np.ndarray
+            image to be cropped
+        coords_idx: Tuple[int]
+            boundary index of myelin segment
+            (xmin, xmax, ymin, ymax, zmin, zmax)
+        margin_pixel: int (default=10)
+            the No. of pixel for margin
+
+    Return:
+        cropped_img: np.ndarry
+            cropped image with several marging
+    '''
+    lenx, leny, lenz = img.shape
+    xmin_idx, xmax_idx, ymin_idx, ymax_idx, zmin_idx, zmax = coords_idx
+
+    xmin_idx, xmax_idx = edge_indexing(lenx, (xmin_idx, xmax_idx), margin_pixel) # re indexing with marging
+    ymin_idx, ymax_idx = edge_indexing(leny, (ymin_idx, ymax_idx), margin_pixel) # re indexing with marging
+    zmin_idx, zmax_idx = edge_indexing(lenz, (zmin_idx, zmax_idx), margin_pixel) # re indexing with marging
+
+    cropped_img = img[xmin_idx:xmax_idx+1, ymin_idx:ymax_idx+1, zmin_idx:zmax_idx+1]
+    return cropped_img
+
+def segment_registration(file_path_regi: Dict[List[Tuple]], raw_path: str='./data', regi_path: str='./registration', margin_pixel: int=10):
+    '''
+    Input Args:
+        file_path_regi: Dict[List[Tuple]]
             path for files to be preformed registration.
-            example) [(raw_file_1.tif, raw_file_1.traces), (raw_file_2.tif, raw_file_2.traces), (raw_file_3.tif, raw_file_3.traces)...]
+            example) {'#raw_file_id' :[(raw_file_1.tif, raw_file_1.traces), (raw_file_2.tif, raw_file_2.traces), ...]}
         raw_path: str (default = './data')
             directory path containing raw .traces and image files
         regi_path: str (default = './registration')
             directory path containing registrated .traces and image files
+        margin_pixel: int (default=10)
+            the No. of pixel for margin
     '''
     logger.debug('start segment_registration')
 
-    for img_id in file_path_regi.keys():
-        for img_name, tracefile in file_path_regi[img_id]:
-            img = io.imread(os.path.join(raw_path, img_name))
-            paths = extractTrace(raw_path, tracefile)
+    for img_id in file_path_regi.keys(): # iterate file id
+        img_container = {} # temporary container for image of different days
 
-            for path_name in paths.keys():
-                seg = path_to_array(paths[path_name])
-                rect_idx = (seg[0, :].min(), seg[0, :].max(),
-                            seg[1, :].min(), seg[1, :].max(),
-                            seg[2, :].min(), seg[2, :].max()) # segment frame index
+        for img_name, tracefile in file_path_regi[img_id]: # fnames (.img, .trace) for each day
+            img = io.imread(os.path.join(raw_path, img_name)) # load image
+            paths = extractTrace(raw_path, tracefile) # load trace file
+
+            for segment_name in paths.keys(): # load each segment
+                seg = path_to_array(paths[segment_name])
+
+                # boundary index of each segment
+                rect_idx = (seg[0, :].min(), seg[0, :].max(), # xmin, xmax 
+                            seg[1, :].min(), seg[1, :].max(), # ymin, ymax
+                            seg[2, :].min(), seg[2, :].max()) # zmin, zmax
+                cropped_img = crop_img(img, rect_idx, margin_pixel)
     return paths
             
     

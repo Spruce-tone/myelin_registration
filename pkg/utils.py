@@ -51,7 +51,7 @@ LOGGING_CONFIG = {
             'format': '[%(levelname)s | %(asctime)s | %(filename)s | %(funcName)s] (line %(lineno)d) %(message)s :: %(name)s logger'
         },
         'debug_format': {
-            'format': '[%(levelname)s | %(asctime)s | %(pathname)s | %(module)s | %(filename)s | %(funcName)s]\n (line %(lineno)d) %(message)s :: %(name)s logger \n\n'
+            'format': '[%(levelname)s | %(asctime)s | %(pathname)s | %(module)s | %(filename)s | %(funcName)s]\n (line %(lineno)d) %(message)s :: %(name)s logger \n'
         },
     },
 
