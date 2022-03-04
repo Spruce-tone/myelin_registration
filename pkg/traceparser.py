@@ -1,4 +1,5 @@
-import gzip, os, re
+import gzip, os, re, pickle
+from inspect import trace
 import xml.etree.ElementTree as ET
 from collections import Counter
 from typing import List, Set, Dict, Tuple
@@ -37,20 +38,25 @@ def extractTrace(tracedir: str, tracefile: str):
                 path['z'].append(int(point.attrib['z']))
             paths[child.attrib['name']] = path 
 
-    paths['fname'] = tracefile
+    # paths['fname'] = tracefile
     return paths
 
-def dir_exist_check(path: str):
+def dir_exist_check(path: str, get_path: bool=False):
     '''
     Input Args:
         path: str
             directory path to check. if no path, make directory in the path
+        get_path: bool (default=False)
+            if true, return the path
     '''
     if not os.path.isdir(path):
         os.makedirs(path, exist_ok=True)
         logger.info(f'Make directory : {path}')
     else:
         logger.info(f'{path} already exist')
+    
+    if get_path:
+        return path
     
 def fname_extension_check(path: str, fname_extension: str) -> List:
     '''
@@ -218,10 +224,10 @@ def edge_indexing(size_single_axis: int, boundary_pixel_idx: Tuple[int], margin_
     return (lowerbnd_idx, uppperbnd_idx)
 
 
-def crop_img(img: np.ndarray, coords_idx: Tuple[int], margin_pixel: int=10) -> np.ndarray:
+def crop_img(img: np.ndarray, coords_idx: Tuple[int], margin_pixel: int=10) -> Tuple[np.ndarray, Tuple[int]]:
     '''
     Input Args:
-        img: np.ndarray
+        img: np.ndarray [z, y, x]
             image to be cropped
         coords_idx: Tuple[int]
             boundary index of myelin segment
@@ -233,49 +239,92 @@ def crop_img(img: np.ndarray, coords_idx: Tuple[int], margin_pixel: int=10) -> n
         cropped_img: np.ndarry
             cropped image with several marging
     '''
-    lenx, leny, lenz = img.shape
-    xmin_idx, xmax_idx, ymin_idx, ymax_idx, zmin_idx, zmax = coords_idx
+    lenz, leny, lenx,  = img.shape
+    xmin_idx, xmax_idx, ymin_idx, ymax_idx, zmin_idx, zmax_idx = coords_idx
+    logger.debug(f'segment boundary idx (xmin_idx, xmax_idx, ymin_idx, ymax_idx, zmin_idx, zmax_idx) = {coords_idx}')
 
     xmin_idx, xmax_idx = edge_indexing(lenx, (xmin_idx, xmax_idx), margin_pixel) # re indexing with marging
     ymin_idx, ymax_idx = edge_indexing(leny, (ymin_idx, ymax_idx), margin_pixel) # re indexing with marging
     zmin_idx, zmax_idx = edge_indexing(lenz, (zmin_idx, zmax_idx), margin_pixel) # re indexing with marging
+    logger.debug(f'segment boundary re-indexing with margin (xmin_idx, xmax_idx, ymin_idx, ymax_idx, zmin_idx, zmax_idx) = {(xmin_idx, xmax_idx, ymin_idx, ymax_idx, zmin_idx, zmax_idx)}')
 
-    cropped_img = img[xmin_idx:xmax_idx+1, ymin_idx:ymax_idx+1, zmin_idx:zmax_idx+1]
-    return cropped_img
+    cropped_img = img[zmin_idx:zmax_idx+1, ymin_idx:ymax_idx+1, xmin_idx:xmax_idx+1]
+    logger.debug(f'cropped image shape : {cropped_img.shape}')
+    return cropped_img, (xmin_idx, xmax_idx, ymin_idx, ymax_idx, zmin_idx, zmax_idx)
 
-def segment_registration(file_path_regi: Dict[List[Tuple]], raw_path: str='./data', regi_path: str='./registration', margin_pixel: int=10):
+def segment_crop(file_path_regi: Dict[str, List[Tuple]], raw_path: str='./data', crop_path: str='crop_data', margin_pixel: int=10):
     '''
     Input Args:
-        file_path_regi: Dict[List[Tuple]]
+        file_path_regi: Dict[str : List[Tuple]]
             path for files to be preformed registration.
             example) {'#raw_file_id' :[(raw_file_1.tif, raw_file_1.traces), (raw_file_2.tif, raw_file_2.traces), ...]}
         raw_path: str (default = './data')
             directory path containing raw .traces and image files
-        regi_path: str (default = './registration')
-            directory path containing registrated .traces and image files
+        crop_path: str (default = './crop_data')
+            directory path containing cropped image and re-indexed segment data
         margin_pixel: int (default=10)
             the No. of pixel for margin
     '''
     logger.debug('start segment_registration')
-
+    name_parser = define_name_parser()
+    
     for img_id in file_path_regi.keys(): # iterate file id
-        img_container = {} # temporary container for image of different days
+        logger.debug(f'img id : {img_id}')
+
+        crop_dir = dir_exist_check(os.path.join(crop_path, f'#{img_id}'), get_path=True) # make directory to save cropped image corresponds to file id
+        seg_container = {} # container to save the segment for cropped image
 
         for img_name, tracefile in file_path_regi[img_id]: # fnames (.img, .trace) for each day
-            img = io.imread(os.path.join(raw_path, img_name)) # load image
-            paths = extractTrace(raw_path, tracefile) # load trace file
+            img = io.imread(os.path.join(raw_path, img_name)) # load image, [z, y, x]
 
-            for segment_name in paths.keys(): # load each segment
+
+            paths = extractTrace(raw_path, tracefile) # load trace file
+            logger.debug(f'[ID : {img_id}] | img shape : {img.shape} | image and trace fname : {img_name}, {tracefile}')
+            
+
+            # parsing day
+            seg_day = name_parser.search(img_name).group('day')
+            seg_container[seg_day] = []
+            
+            # segment_crop
+            for idx, segment_name in enumerate(paths.keys()): # load each segment
+                logger.debug(f'[ID : {img_id}][fname : {tracefile}]  segment_name : [idx : {idx}] {segment_name}')
+
+                # container to save segment metadata {segment_name : segment[np.ndarray, shape=(3, length)]}
+                seg_meta = {}
+
                 seg = path_to_array(paths[segment_name])
 
                 # boundary index of each segment
                 rect_idx = (seg[0, :].min(), seg[0, :].max(), # xmin, xmax 
                             seg[1, :].min(), seg[1, :].max(), # ymin, ymax
                             seg[2, :].min(), seg[2, :].max()) # zmin, zmax
-                cropped_img = crop_img(img, rect_idx, margin_pixel)
-    return paths
-            
-    
+
+                # image crop and index for cropped image
+                cropped_img, new_bnd_idx = crop_img(img, rect_idx, margin_pixel)
+
+                # save cropped image
+                io.imsave(os.path.join(crop_dir, f'd{seg_day} {segment_name}.tif'), cropped_img)
+                
+                # re-indexing the segment for cropped image 
+                xmin_crop_idx, _, ymin_crop_idx, _, zmin_crop_idx, _ = new_bnd_idx # take min index
+                seg[0, :] = seg[0, :] - xmin_crop_idx
+                seg[1, :] = seg[1, :] - ymin_crop_idx
+                seg[2, :] = seg[2, :] - zmin_crop_idx
+
+                # save segment data for cropped image
+                seg_meta[segment_name] = seg # segment name and path, ex) {'1-1' : path0}
+                seg_container[seg_day].append(seg_meta) # save segment for each day {'0' : [{'1-1' : path0}, {'1-2' : path1},...], '1' : []}
+
+    save_pickle(seg_container, crop_dir, f'#{img_id}.pickle') # save segment data in pickle
+
+def save_pickle(data, path: str, fname: str):
+    with open(os.path.join(path, fname), 'wb') as f:
+        pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
+
+def load_pickle(path: str, fname: str):
+    with open(os.path.join(path, fname), 'rb') as f:
+        return pickle.load(f)
 
 if __name__=='__main__':
     file_path_regi = search_regi_files(raw_path='./data', regi_path='./registration')

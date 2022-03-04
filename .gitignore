@@ -1,9 +1,12 @@
+# directories
 Day 1
 Day 5
 Day 7CNO
 data
 logs
+crop_data
 
+# filename extension
 *.log
 *.tif
 *.traces
