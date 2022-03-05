@@ -3,6 +3,7 @@ from inspect import trace
 import xml.etree.ElementTree as ET
 from collections import Counter
 from typing import List, Set, Dict, Tuple
+from matplotlib import docstring
 from skimage import io
 import numpy as np
 
@@ -157,6 +158,9 @@ def search_regi_files(raw_path: str='./data', regi_path: str='./registration') -
     regi_list = fname_extension_check(regi_path, '.traces')
     regi_list = unique_counter(regi_list, save_name=False)
 
+    logger.debug(f'Raw uniqe count : {raw_list}')
+    logger.debug(f'Regi uniqe count : {regi_list}')
+
     # extract file list that is not yet preformed registration
     logger.debug('start extract file list for registration')
     file_path_regi = {}
@@ -165,7 +169,7 @@ def search_regi_files(raw_path: str='./data', regi_path: str='./registration') -
             logger.debug(f'More than 2 files are needed for registration. {raw_id} is excluded')
             continue
 
-        if raw_id in regi_list.keys():
+        if raw_id in regi_list.keys(): ##################################### crop metadata로 확인하는것으로 바꾸기
             if set(raw_list[raw_id]['day']) == set(regi_list[raw_id]['day']):
                 logger.debug(f'Already registration is preformed. {raw_id} is excluded')
                 continue
@@ -252,6 +256,41 @@ def crop_img(img: np.ndarray, coords_idx: Tuple[int], margin_pixel: int=10) -> T
     logger.debug(f'cropped image shape : {cropped_img.shape}')
     return cropped_img, (xmin_idx, xmax_idx, ymin_idx, ymax_idx, zmin_idx, zmax_idx)
 
+def save_pickle(data, path: str, fname: str):
+    '''
+    Save data as pickle
+
+    Parameters
+    ----------
+    data : 
+        data to save
+    path : str
+        save path
+    fname : str
+        file name
+    '''    
+    with open(os.path.join(path, fname), 'wb') as f:
+        pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
+
+def load_pickle(path: str, fname: str):
+    '''
+    load pickle data from file
+
+    Parameters
+    ----------
+    path : str
+        load path
+    fname : str
+        file name
+
+    Returns
+    -------
+    _type_
+        loaded pickle
+    '''
+    with open(os.path.join(path, fname), 'rb') as f:
+        return pickle.load(f)
+
 def segment_crop(file_path_regi: Dict[str, List[Tuple]], raw_path: str='./data', crop_path: str='crop_data', margin_pixel: int=10):
     '''
     Input Args:
@@ -273,6 +312,7 @@ def segment_crop(file_path_regi: Dict[str, List[Tuple]], raw_path: str='./data',
 
         crop_dir = dir_exist_check(os.path.join(crop_path, f'#{img_id}'), get_path=True) # make directory to save cropped image corresponds to file id
         seg_container = {} # container to save the segment for cropped image
+        metadata = {'day' : [], 'segment_name' : []} # metadata for the list of segment and day
 
         for img_name, tracefile in file_path_regi[img_id]: # fnames (.img, .trace) for each day
             img = io.imread(os.path.join(raw_path, img_name)) # load image, [z, y, x]
@@ -285,7 +325,10 @@ def segment_crop(file_path_regi: Dict[str, List[Tuple]], raw_path: str='./data',
             # parsing day
             seg_day = name_parser.search(img_name).group('day')
             seg_container[seg_day] = []
-            
+
+            # add day information 
+            metadata['day'].append(seg_day)
+
             # segment_crop
             for idx, segment_name in enumerate(paths.keys()): # load each segment
                 logger.debug(f'[ID : {img_id}][fname : {tracefile}]  segment_name : [idx : {idx}] {segment_name}')
@@ -316,15 +359,94 @@ def segment_crop(file_path_regi: Dict[str, List[Tuple]], raw_path: str='./data',
                 seg_meta[segment_name] = seg # segment name and path, ex) {'1-1' : path0}
                 seg_container[seg_day].append(seg_meta) # save segment for each day {'0' : [{'1-1' : path0}, {'1-2' : path1},...], '1' : []}
 
+                # metadata for segment list
+                metadata['segment_name'].append(segment_name)
+
+                # metadata for cropped image size
+                if metadata.get(segment_name, None) == None:
+                    metadata[segment_name] = [np.array(cropped_img.shape)]
+                else:
+                    metadata[segment_name].append(np.array(cropped_img.shape))
+
+    # count the segment name
+    segment_counter = Counter(metadata['segment_name'])
+    metadata['segment_name'] = [segment for segment in segment_counter.keys() if segment_counter[segment] > 1] # save the segment name if count is larger than 1
+    
+    # save the common largest image size for registration
+    for segment in metadata.keys():
+        if segment not in ['day', 'segment_name']: # exclude day and segment name keyword
+            metadata[segment] = compare_size(metadata[segment], ismax=True) # calculate the common largest image size
+
+    save_pickle(metadata, crop_dir, f'#{img_id} meta.pickle') # save metadata for day and segment name
     save_pickle(seg_container, crop_dir, f'#{img_id}.pickle') # save segment data in pickle
 
-def save_pickle(data, path: str, fname: str):
-    with open(os.path.join(path, fname), 'wb') as f:
-        pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
+def compare_size(shape_list: List[np.ndarray], ismax: bool=True) -> np.ndarray:
+    '''
+    compare the size of images and return the maximum value for each dimension
 
-def load_pickle(path: str, fname: str):
-    with open(os.path.join(path, fname), 'rb') as f:
-        return pickle.load(f)
+    Parameters
+    ----------
+    shape_list : List[np.ndarray]
+        list contain the size of images
+    ismax : bool, optional
+        default = True
+        if True, return maximum size of each axis
+        if Flase, return minimum size of each axis
 
+    Returns
+    -------
+    np.ndarray
+        the largest image size for registration 
+    '''
+    shape_list = np.array(shape_list)
+    if ismax: 
+        return shape_list.max(axis=0)
+    else:
+        return shape_list.min(axis=0)
+
+def pad_image(img: np.ndarray, regi_size: np.ndarray) -> np.ndarray:
+    '''
+    padding to match size of images for registration
+
+    Parameters
+    ----------
+    img : np.ndarray
+        image for padding
+    regi_size : np.ndarray
+        image size after padding
+
+    Returns
+    -------
+    padded_image : np.ndarray
+        padded image
+    '''
+    img_size = np.array(img.shape)
+
+    half_size_diff = (regi_size - img_size)/2
+
+    padding = np.array([[int(np.floor(i)), int(np.ceil(i))] for i in half_size_diff])
+    logger.debug(f'padding shape : {padding}')
+    padded_image = np.pad(img, padding, 'constant', constant_values=np.zeros(padding.shape))
+    logger.debug(f'padding size compare | before {img.shape} | after {padded_image.shape}')
+    return padded_image
+
+
+def regi_cropped_img(crop_path: str='./crop_data'):
+    for img_id in os.listdir(crop_path): # get cropped image list
+        segment_meta = load_pickle(os.path.join(crop_path, img_id), f'{img_id} meta.pickle')
+        
+        for seg in segment_meta['segment_name']:
+            common_img_size = segment_meta[seg]
+            img_stack = []
+
+            for day in segment_meta['day']:
+                img = io.imread(os.path.join(crop_path, img_id, f'd{day} {seg}.tif'))
+                logger.debug(f'[{seg} segment] day {day} | img shape : {img.shape} | common image size : {common_img_size}')
+
+                # padding image
+                padded_img = pad_image(img, common_img_size)
+                logger.debug(f'padded image size : {padded_img.shape}')
+                img_stack.append(padded_img)
+                
 if __name__=='__main__':
     file_path_regi = search_regi_files(raw_path='./data', regi_path='./registration')
