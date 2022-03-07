@@ -5,8 +5,11 @@ Day 7CNO
 data
 logs
 crop_data
+registration
 
 # filename extension
+*.pickle
+*.jpg
 *.log
 *.tif
 *.traces
