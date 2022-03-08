@@ -6,10 +6,16 @@ data
 logs
 crop_data
 registration
+text image
+build
+dist
 
 # filename extension
 *.pickle
 *.jpg
 *.log
 *.tif
+*.spec
 *.traces
+*.png
+*.ttf
