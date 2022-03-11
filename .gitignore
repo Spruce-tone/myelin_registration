@@ -19,3 +19,7 @@ dist
 *.traces
 *.png
 *.ttf
+
+# specific file
+test.ipynb
+gui.py
