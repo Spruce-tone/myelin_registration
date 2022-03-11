@@ -172,7 +172,6 @@ def search_regi_files(raw_path: str='./data', crop_path: str='./crop_data', regi
         if raw_list[raw_id]['count'] < 2:
             logger.debug(f'More than 2 files are needed for registration. {raw_id} is excluded')
             continue
-        
         # metadata of cropped image
         # if cropping is performed, pass and check next image 
         if not os.path.isfile(os.path.join(crop_path, f'#{raw_id}', f'#{raw_id} meta.pickle')): 
@@ -183,11 +182,11 @@ def search_regi_files(raw_path: str='./data', crop_path: str='./crop_data', regi
             if set(raw_list[raw_id]['day']) == set(metadata['day']):
                 logger.debug(f'Already image cropping is preformed. #{raw_id} is excluded')
                 continue
-
-        file_path_regi[raw_id] = []
-        sorted_fnames = [fname.strip('.traces') for fname in sorted(raw_list[raw_id]['fname'], key=day_sorting)]
-        file_path_regi[raw_id] = [(fname+'.tif', fname+'.traces') for fname in sorted_fnames]
-        logger.debug(f'{raw_list[raw_id]["fname"]} is added to the image crop list')
+        
+    file_path_regi[raw_id] = []
+    sorted_fnames = [fname.strip('.traces') for fname in sorted(raw_list[raw_id]['fname'], key=day_sorting)]
+    file_path_regi[raw_id] = [(fname+'.tif', fname+'.traces') for fname in sorted_fnames]
+    logger.debug(f'{raw_list[raw_id]["fname"]} is added to the image crop list')
     return file_path_regi
 
 def path_to_array(path: Dict) -> np.ndarray:
@@ -560,7 +559,7 @@ def regi_cropped_img(crop_path: str='./crop_data', regi_path: str='./registratio
         # registration check
         # if the metadata is not exist in the registration directory, perform registration
         # else pass and check the next image
-        if not os.path.isfile(os.path.join(crop_path, f'{img_id}', f'{img_id} meta.pickle')):
+        if not os.path.isfile(os.path.join(regi_path, f'{img_id}', f'{img_id} meta.pickle')):
             logger.debug(f'[{img_id}] {img_id} meta.pickle is not exist. start registration')
 
             for seg in segment_meta['segment_name']:
@@ -590,7 +589,7 @@ def regi_cropped_img(crop_path: str='./crop_data', regi_path: str='./registratio
             save_pickle(segment_meta, os.path.join(regi_path, img_id), f'{img_id} meta.pickle')
         
         else:
-            logger.debug(f'#{img_id} registration is already performed. pass and check the next image')
+            logger.debug(f'{img_id} registration is already performed. pass and check the next image')
             continue
 
 if __name__=='__main__':

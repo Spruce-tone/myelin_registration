@@ -1,4 +1,5 @@
 # directories
+data
 Day 1
 Day 5
 Day 7CNO
@@ -18,7 +19,8 @@ dist
 *.spec
 *.traces
 *.png
-*.ttf
+*.tif
+*.traces
 
 # specific file
 test.ipynb
